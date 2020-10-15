@@ -1,71 +1,101 @@
-
 #include "Global.h"
 #include "GBNRdtSender.h"
 
-
-GBNRdtSender::GBNRdtSender():expectSequenceNumberSend(0),waitingState(false)
+GBNRdtSender::GBNRdtSender() : expectSequenceNumberSend(0), waitingState(false)
 {
+	base = 0;
+	nextseqnum = 0;
+	winsizeN = 4;
+	seqsize = 8;
+	Packet temp;
 }
-
 
 GBNRdtSender::~GBNRdtSender()
 {
 }
 
-
-
-bool GBNRdtSender::getWaitingState() {
-	return waitingState;
+bool GBNRdtSender::getWaitingState()
+{
+	return (nextseqnum - base) % seqsize == winsizeN;
 }
 
-
-
-
-bool GBNRdtSender::send(const Message &message) {
-	if (this->waitingState) { //发送方处于等待确认状态
+bool GBNRdtSender::send(const Message &message)
+{
+	this->waitingState = getWaitingState();
+	if (this->waitingState)
+	{ //发送方处于等待确认状态
+		std::cout << "窗口已满" << std::endl;
 		return false;
 	}
+	this->Allpacket[nextseqnum].acknum = -1; //忽略该字段
+	this->Allpacket[nextseqnum].seqnum = nextseqnum;
+	this->Allpacket[nextseqnum].checksum = 0;
+	memcpy(this->Allpacket[nextseqnum].payload, message.data, sizeof(message.data));
+	this->Allpacket[nextseqnum].checksum = pUtils->calculateCheckSum(this->Allpacket[nextseqnum]);
+	pUtils->printPacket("发送方发送报文", this->Allpacket[nextseqnum]);
+	printSlideWindow();
+	if (base == nextseqnum)
+		pns->startTimer(SENDER, Configuration::TIME_OUT, this->base); //启动发送方定时器
+	pns->sendToNetworkLayer(RECEIVER, this->Allpacket[nextseqnum]);   //调用模拟网络环境的sendToNetworkLayer，通过网络层发送到对方
 
-	this->packetWaitingAck.acknum = -1; //忽略该字段
-	this->packetWaitingAck.seqnum = this->expectSequenceNumberSend;
-	this->packetWaitingAck.checksum = 0;
-	memcpy(this->packetWaitingAck.payload, message.data, sizeof(message.data));
-	this->packetWaitingAck.checksum = pUtils->calculateCheckSum(this->packetWaitingAck);
-	pUtils->printPacket("发送方发送报文", this->packetWaitingAck);
-	pns->startTimer(SENDER, Configuration::TIME_OUT,this->packetWaitingAck.seqnum);			//启动发送方定时器
-	pns->sendToNetworkLayer(RECEIVER, this->packetWaitingAck);								//调用模拟网络环境的sendToNetworkLayer，通过网络层发送到对方
-
-	this->waitingState = true;																					//进入等待状态
+	this->nextseqnum = (this->nextseqnum + 1) % this->seqsize;
+	printSlideWindow();
 	return true;
 }
 
-void GBNRdtSender::receive(const Packet &ackPkt) {
-	if (this->waitingState == true) {//如果发送方处于等待ack的状态，作如下处理；否则什么都不做
-		//检查校验和是否正确
-		int checkSum = pUtils->calculateCheckSum(ackPkt);
+void GBNRdtSender::receive(const Packet &ackPkt)
+{
 
-		//如果校验和正确，并且确认序号=发送方已发送并等待确认的数据包序号
-		if (checkSum == ackPkt.checksum && ackPkt.acknum == this->packetWaitingAck.seqnum) {
-			this->expectSequenceNumberSend = 1 - this->expectSequenceNumberSend;			//下一个发送序号在0-1之间切换
-			this->waitingState = false;
-			pUtils->printPacket("发送方正确收到确认", ackPkt);
-			pns->stopTimer(SENDER, this->packetWaitingAck.seqnum);		//关闭定时器
-		}
-		else {
-			pUtils->printPacket("发送方没有正确收到确认，重发上次发送的报文", this->packetWaitingAck);
-			pns->stopTimer(SENDER, this->packetWaitingAck.seqnum);									//首先关闭定时器
-			pns->startTimer(SENDER, Configuration::TIME_OUT, this->packetWaitingAck.seqnum);			//重新启动发送方定时器
-			pns->sendToNetworkLayer(RECEIVER, this->packetWaitingAck);								//重新发送数据包
+	int checkSum = pUtils->calculateCheckSum(ackPkt);
 
+	//如果校验和正确，并且确认序号=发送方已发送并等待确认的数据包序号
+	if (checkSum == ackPkt.checksum)
+	{
+		this->base = (ackPkt.acknum + 1) % this->seqsize;
+		pUtils->printPacket("发送方正确收到确认", ackPkt);
+		printSlideWindow();
+		if (base == nextseqnum)
+			pns->stopTimer(SENDER, this->base);
+		else
+		{
+			pns->stopTimer(SENDER, this->base);
+			pns->startTimer(SENDER, Configuration::TIME_OUT, this->base);
 		}
-	}	
+	}
+	else
+	{
+		pUtils->printPacket("收到的包损坏", ackPkt);
+	}
 }
 
-void GBNRdtSender::timeoutHandler(int seqNum) {
-	//唯一一个定时器,无需考虑seqNum
-	pUtils->printPacket("发送方定时器时间到，重发上次发送的报文", this->packetWaitingAck);
-	pns->stopTimer(SENDER,seqNum);										//首先关闭定时器
-	pns->startTimer(SENDER, Configuration::TIME_OUT,seqNum);			//重新启动发送方定时器
-	pns->sendToNetworkLayer(RECEIVER, this->packetWaitingAck);			//重新发送数据包
+void GBNRdtSender::timeoutHandler(int seqNum)
+{
+	if (this->base == this->nextseqnum) //窗口为空的特殊情况
+		return;
+	else
+	{
+		pns->startTimer(SENDER, Configuration::TIME_OUT, this->base);
+		for (int i = this->base; i != this->nextseqnum; i = (i + 1) % this->seqsize)
+		{
+			pns->sendToNetworkLayer(RECEIVER, this->Allpacket[i]);
+			pUtils->printPacket("重发超时分组", this->Allpacket[i]);
+		}
+	}
+}
 
+void GBNRdtSender::printSlideWindow()
+{
+	int i;
+	for (i = 0; i < seqsize; i++)
+	{
+		if (i == base)
+			std::cout << "[";
+		std::cout << i;
+		if (i == this->nextseqnum)
+			std::cout << "*";
+		if (i == (base + this->winsizeN - 1) % seqsize)
+			std::cout << "]";
+		std::cout << " ";
+	}
+	std::cout << std::endl;
 }
