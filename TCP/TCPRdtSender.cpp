@@ -1,25 +1,38 @@
 #include "Global.h"
-#include "GBNRdtSender.h"
+#include "TCPRdtSender.h"
 
-GBNRdtSender::GBNRdtSender() : expectSequenceNumberSend(0), waitingState(false)
+TCPRdtSender::TCPRdtSender() : expectSequenceNumberSend(0), waitingState(false)
 {
 	base = 0;
 	nextseqnum = 0;
 	winsizeN = 4;
 	seqsize = 8;
 	Packet temp;
+	redundack = 0;
 }
 
-GBNRdtSender::~GBNRdtSender()
+TCPRdtSender::~TCPRdtSender()
 {
 }
 
-bool GBNRdtSender::getWaitingState()
+bool TCPRdtSender::getWaitingState()
 {
-	return (base + winsizeN) % seqsize == nextseqnum % seqsize;
+	return (this->base + winsizeN) % seqsize == nextseqnum % seqsize;
 }
 
-bool GBNRdtSender::send(const Message &message)
+bool TCPRdtSender::isinwindow(int seqNum)
+{
+	if ((this->base + this->winsizeN) % this->seqsize > this->base)
+		return (seqNum >= this->base) && (seqNum < (this->base + this->winsizeN) % this->seqsize);
+	else if ((this->base + this->winsizeN) % this->seqsize < this->base)
+		return (seqNum >= this->base) || (seqNum < (this->base + this->winsizeN) % this->seqsize);
+	else
+	{
+		return false;
+	}
+}
+
+bool TCPRdtSender::send(const Message &message)
 {
 	this->waitingState = getWaitingState();
 	if (this->waitingState)
@@ -43,23 +56,34 @@ bool GBNRdtSender::send(const Message &message)
 	return true;
 }
 
-void GBNRdtSender::receive(const Packet &ackPkt)
+void TCPRdtSender::receive(const Packet &ackPkt)
 {
 
 	int checkSum = pUtils->calculateCheckSum(ackPkt);
 
 	//如果校验和正确，并且确认序号=发送方已发送并等待确认的数据包序号
-	if (checkSum == ackPkt.checksum)
+	if (checkSum == ackPkt.checksum && isinwindow(ackPkt.acknum))
 	{
 		this->base = (ackPkt.acknum + 1) % this->seqsize;
 		pUtils->printPacket("发送方正确收到确认", ackPkt);
 		printSlideWindow();
-		if (base == nextseqnum)
-			pns->stopTimer(SENDER, this->base);
-		else
+		pns->stopTimer(SENDER, this->base);
+		if (this->base != this->nextseqnum)
+		{
+			pns->startTimer(SENDER, Configuration::TIME_OUT, this->base);
+		}
+		this->redundack = 0;
+	}
+	else if (!isinwindow(ackPkt.acknum))
+	{
+		this->redundack = this->redundack + 1;
+		if(this->redundack == 3)
 		{
 			pns->stopTimer(SENDER, this->base);
+			pns->sendToNetworkLayer(RECEIVER, this->Allpacket[this->base]);
 			pns->startTimer(SENDER, Configuration::TIME_OUT, this->base);
+			pUtils->printPacket("已收到3个冗余ack，重传分组", this->Allpacket[this->base]);
+			this->redundack = 0;
 		}
 	}
 	else
@@ -68,34 +92,36 @@ void GBNRdtSender::receive(const Packet &ackPkt)
 	}
 }
 
-void GBNRdtSender::timeoutHandler(int seqNum)
+void TCPRdtSender::timeoutHandler(int seqNum)
 {
 	if (this->base == this->nextseqnum) //窗口为空的特殊情况
 		return;
 	else
 	{
 		pns->startTimer(SENDER, Configuration::TIME_OUT, this->base);
-		for (int i = this->base; i != this->nextseqnum; i = (i + 1) % this->seqsize)
-		{
-			pns->sendToNetworkLayer(RECEIVER, this->Allpacket[i]);
-			pUtils->printPacket("重发超时分组", this->Allpacket[i]);
-		}
+		pns->sendToNetworkLayer(RECEIVER, this->Allpacket[this->base]);
+		pUtils->printPacket("重发超时分组", this->Allpacket[this->base]);
 	}
 }
 
-void GBNRdtSender::printSlideWindow()
+void TCPRdtSender::printSlideWindow()
 {
 	int i;
 	for (i = 0; i < seqsize; i++)
 	{
 		if (i == base)
-			std::cout << "[";
-		std::cout << i;
+			std::cout << "(";
+
 		if (i == this->nextseqnum)
-			std::cout << "*";
+			std::cout << "[" << i << "]";
+		else
+		{
+			std::cout << i;
+		}
+
 		if (i == (base + this->winsizeN - 1) % seqsize)
-			std::cout << "]";
-		std::cout << " ";
+			std::cout << ")";
+		std::cout << "  ";
 	}
 	std::cout << std::endl;
 }
