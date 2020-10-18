@@ -89,13 +89,16 @@ void GBNRdtSender::printSlideWindow()
 	for (i = 0; i < seqsize; i++)
 	{
 		if (i == base)
-			std::cout << "[";
-		std::cout << i;
+			std::cout << "(";
 		if (i == this->nextseqnum)
-			std::cout << "*";
+			std::cout << "[" << i <<"]";
+		else
+		{
+			std::cout << i;
+		}
 		if (i == (base + this->winsizeN - 1) % seqsize)
-			std::cout << "]";
-		std::cout << " ";
+			std::cout << ")";
+		std::cout << "  ";
 	}
 	std::cout << std::endl;
 }

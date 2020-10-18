@@ -13,8 +13,8 @@ int main(int argc, char* argv[])
 {
 	RdtSender *ps = new GBNRdtSender();
 	RdtReceiver * pr = new GBNRdtReceiver();
-	// pns->setRunMode(0);  //VERBOS模式
-	pns->setRunMode(1);  //安静模式
+	pns->setRunMode(0);  //VERBOS模式
+	// pns->setRunMode(1);  //安静模式
 	pns->init();
 	pns->setRtdSender(ps);
 	pns->setRtdReceiver(pr);
