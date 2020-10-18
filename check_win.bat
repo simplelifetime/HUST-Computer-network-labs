@@ -4,7 +4,7 @@
 :: outputname 输出文件名
 :: resultname 程序控制台输出重定向文件名
 
-set appname="D:\\StopWait\\bin\\SR.exe"
+set appname="D:\\StopWait\\bin\\TCP.exe"
 set inputname="D:\\StopWait\\input.txt"
 set outputname="D:\\StopWait\\output.txt"
 set resultname="result.txt"

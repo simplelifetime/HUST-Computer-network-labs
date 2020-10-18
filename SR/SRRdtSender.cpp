@@ -34,7 +34,7 @@ bool SRRdtSender::isinwindow(int seqNum)
 }
 bool SRRdtSender::getWaitingState()
 {
-	return (nextseqnum - base) % seqsize == winsizeN ;
+	return (base + winsizeN) % seqsize == nextseqnum;
 }
 
 bool SRRdtSender::send(const Message &message)
@@ -51,8 +51,6 @@ bool SRRdtSender::send(const Message &message)
 	this->Allpacket[nextseqnum].checksum = pUtils->calculateCheckSum(this->Allpacket[nextseqnum]);
 	pUtils->printPacket("发送方发送报文", this->Allpacket[nextseqnum]);
 	printSlideWindow();
-	// if (base == nextseqnum)
-	// 	pns->startTimer(SENDER, Configuration::TIME_OUT, this->base); //启动发送方定时器
 	pns->startTimer(SENDER, Configuration::TIME_OUT, this->nextseqnum);
 	pns->sendToNetworkLayer(RECEIVER, this->Allpacket[nextseqnum]); //调用模拟网络环境的sendToNetworkLayer，通过网络层发送到对方
 
@@ -67,14 +65,15 @@ void SRRdtSender::receive(const Packet &ackPkt)
 	int checkSum = pUtils->calculateCheckSum(ackPkt);
 
 	//如果校验和正确，并且确认序号=发送方已发送并等待确认的数据包序号
-	if (checkSum == ackPkt.checksum && isinwindow(ackPkt.acknum))
+	if (checkSum == ackPkt.checksum)
 	{
 		pns->stopTimer(SENDER, ackPkt.acknum);
 		if (this->base == ackPkt.acknum)
 		{
 			this->rcvstatus[this->base] = 0;
 			this->base = (this->base + 1) % seqsize;
-			for (int i = this->base; i != (this->base + this->winsizeN - 1) % seqsize; i = (i + 1) % seqsize)
+			int tmp = this->base;
+			for (int i = tmp; i != (tmp + this->winsizeN - 1) % seqsize; i = (i + 1) % seqsize)
 			{
 				if (this->rcvstatus[i] == 1)
 				{
@@ -87,28 +86,29 @@ void SRRdtSender::receive(const Packet &ackPkt)
 				}
 			}
 		}
-		else
+		else if(isinwindow(ackPkt.acknum))
 		{
 			rcvstatus[ackPkt.acknum] = 1;
 		}
+		else
+		{
+			pUtils->printPacket("收到的包失序", ackPkt);
+		}
+		
 	}
 	else
 	{
-		pUtils->printPacket("收到的包损坏或失序", ackPkt);
+		pUtils->printPacket("收到的包损坏", ackPkt);
 	}
 	printSlideWindow();
+	return;
 }
 
 void SRRdtSender::timeoutHandler(int seqNum)
 {
-	if (this->base == this->nextseqnum) //窗口为空的特殊情况
-		pns->startTimer(SENDER, Configuration::TIME_OUT, seqNum);
-	else
-	{
-		pns->startTimer(SENDER, Configuration::TIME_OUT, seqNum);
-		pns->sendToNetworkLayer(RECEIVER, this->Allpacket[seqNum]);
-		pUtils->printPacket("重发超时分组", this->Allpacket[seqNum]);
-	}
+	pns->startTimer(SENDER, Configuration::TIME_OUT, seqNum);
+	pns->sendToNetworkLayer(RECEIVER, this->Allpacket[seqNum]);
+	pUtils->printPacket("重发超时分组", this->Allpacket[seqNum]);
 }
 
 void SRRdtSender::printSlideWindow()

@@ -49,12 +49,15 @@ void SRRdtReceiver::receive(const Packet &packet)
 			pns->delivertoAppLayer(RECEIVER, msg);
 			tempPacketrcv[this->expectSequenceNumberRcvd] = 0;
 			this->expectSequenceNumberRcvd = (this->expectSequenceNumberRcvd + 1) % seqsize;
-			for (int i = this->expectSequenceNumberRcvd; i != (this->expectSequenceNumberRcvd + winsizeN - 1) % seqsize; i = (i + 1) % seqsize)
+			int tmp = this->expectSequenceNumberRcvd;
+			for (int i = tmp; i != (tmp + winsizeN - 1) % seqsize; i = (i + 1) % seqsize)
 			{
 				if (tempPacketrcv[i] == 1)
 				{
+					Message msg;
 					memcpy(msg.data, temppacket[i].payload, sizeof(temppacket[i].payload));
 					pns->delivertoAppLayer(RECEIVER, msg);
+					pUtils->printPacket("数据递交到上层", temppacket[i]);
 					tempPacketrcv[i] = 0;
 					this->expectSequenceNumberRcvd = (this->expectSequenceNumberRcvd + 1) % seqsize;
 				}
